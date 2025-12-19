@@ -2,7 +2,7 @@ name: Deploy Web Dashboard
 
 on:
   push:
-    branches: ["main"] # Hoặc master tùy repo của bạn
+    branches: ["main"] # Đảm bảo tên nhánh chính của bạn là 'main' (hoặc 'master')
   workflow_dispatch:
 
 permissions:
@@ -19,17 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Đã nâng cấp lên v4
+
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4 # Đã nâng cấp lên v4
         with:
           node-version: '18'
+
       - name: Install
         run: npm install
+
       - name: Build
         run: npm run build
+
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3 # Đã nâng cấp lên v3 (mới nhất cho Pages)
         with:
           path: ./dist
 
@@ -42,4 +46,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v2
+        uses: actions/deploy-pages@v4 # Đã nâng cấp lên v4
