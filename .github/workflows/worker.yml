@@ -19,5 +19,5 @@ jobs:
       - name: Run Scraper
         env:
           # Đây là chỗ ta sẽ dùng Secret để bảo mật API Key
-          FIREBASE_API_KEY: ${{ secrets.AIzaSyAjgMEBvwLopIA0smZXY8zpWL3uxiLjQtE }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
         run: npm run scan
