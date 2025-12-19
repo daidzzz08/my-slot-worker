@@ -1,0 +1,23 @@
+name: Slot Sniper Worker
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Chạy mỗi 15 phút
+  workflow_dispatch: # Cho phép bấm nút chạy bằng tay
+
+jobs:
+  snipe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm install
+      - name: Run Scraper
+        env:
+          # Đây là chỗ ta sẽ dùng Secret để bảo mật API Key
+          FIREBASE_API_KEY: ${{ secrets.AIzaSyAjgMEBvwLopIA0smZXY8zpWL3uxiLjQtE }}
+        run: npm run scan
