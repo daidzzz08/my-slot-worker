@@ -4,10 +4,10 @@ import {
   getFirestore, collection, addDoc, onSnapshot, 
   doc, deleteDoc, query, orderBy, serverTimestamp 
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously } from 'firebase/auth';
-import { Trash2, ExternalLink, RefreshCw, Plus, ShieldAlert } from 'lucide-react';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { Trash2, ExternalLink, RefreshCw, Plus, ShieldAlert, Activity, WifiOff } from 'lucide-react';
 
-// Config cho Client (Công khai không sao vì có Rules bảo vệ)
+// --- CẤU HÌNH ---
 const firebaseConfig = {
   apiKey: "AIzaSyAjgMEBvwLopIA0smZXY8zpWL3uxiLjQtE",
   authDomain: "tool-theo-doi-slot.firebaseapp.com",
@@ -17,81 +17,252 @@ const firebaseConfig = {
   appId: "1:84464301578:web:3ea64e467eca65e847d1f3"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
 const APP_ID = 'duytan_sniper_v1';
+
+// --- KHỞI TẠO AN TOÀN ---
+// Tránh lỗi crash trắng màn hình nếu Firebase init thất bại
+let app, db, auth, initError;
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+} catch (e) {
+  console.error("Firebase Init Error:", e);
+  initError = e.message;
+}
 
 export default function App() {
   const [targets, setTargets] = useState([]);
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState(initError || null);
 
   useEffect(() => {
-    signInAnonymously(auth);
-    const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'targets'), orderBy('createdAt', 'desc'));
-    return onSnapshot(q, (snap) => {
-      setTargets(snap.docs.map(d => ({id: d.id, ...d.data()})));
-      setLoading(false);
-    });
+    if (initError) return;
+
+    // 1. Đăng nhập ẩn danh
+    const initAuth = async () => {
+        try {
+            await signInAnonymously(auth);
+        } catch (e) {
+            console.error("Auth Error:", e);
+            setError("Lỗi xác thực: " + e.message);
+        }
+    };
+    initAuth();
+
+    // 2. Lắng nghe trạng thái user
+    const unsubAuth = onAuthStateChanged(auth, (u) => setUser(u));
+
+    // 3. Lắng nghe Data (chỉ khi có DB)
+    let unsubData = () => {};
+    if (db) {
+        try {
+            const q = query(
+                collection(db, 'artifacts', APP_ID, 'public', 'data', 'targets'), 
+                orderBy('createdAt', 'desc')
+            );
+            unsubData = onSnapshot(q, (snap) => {
+                setTargets(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                setLoading(false);
+            }, (err) => {
+                console.error("Snapshot Error:", err);
+                // Không set error toàn cục để tránh chặn UI, chỉ log
+                setLoading(false); 
+            });
+        } catch (err) {
+            console.error("Query Error:", err);
+            setError("Lỗi truy vấn Database.");
+            setLoading(false);
+        }
+    }
+
+    return () => {
+        unsubAuth();
+        unsubData();
+    };
   }, []);
 
   const add = async (e) => {
     e.preventDefault();
-    if (!url.includes('duytan.edu.vn')) return alert('Link không đúng định dạng!');
-    await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'targets'), {
-      name, url, lastSlots: -1, status: 'pending', createdAt: serverTimestamp()
-    });
-    setUrl(''); setName('');
+    if (!url.includes('duytan.edu.vn')) return alert('Link phải chứa duytan.edu.vn!');
+    if (!user) return alert('Đang kết nối server, vui lòng chờ...');
+    
+    try {
+        await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'targets'), {
+          name: name || 'Không tên', 
+          url, 
+          lastSlots: -1, 
+          status: 'pending', 
+          createdAt: serverTimestamp(),
+          uid: user.uid
+        });
+        setUrl(''); setName('');
+    } catch (err) {
+        alert("Lỗi thêm: " + err.message);
+    }
   };
 
   const remove = async (id) => {
-    if(confirm('Xóa lớp này?')) await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'targets', id));
+    if(window.confirm('Xóa lớp này?')) { // Dùng window.confirm để tránh lỗi strict mode
+        try {
+            await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'targets', id));
+        } catch(err) {
+            alert("Lỗi xóa: " + err.message);
+        }
+    }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 font-sans">
-      <div className="max-w-3xl mx-auto">
-        <header className="mb-8 border-b border-gray-700 pb-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-blue-400">DTU SLOT HUNTER</h1>
-            <p className="text-xs text-gray-500">Auto-check mỗi 15 phút</p>
+  // --- GIAO DIỆN LỖI (Thay vì màn hình trắng) ---
+  if (error) {
+      return (
+          <div className="min-h-screen bg-black flex items-center justify-center text-red-500 p-4 font-mono">
+              <div className="border border-red-800 p-6 rounded bg-red-900/10 max-w-md">
+                  <ShieldAlert size={48} className="mb-4 mx-auto" />
+                  <h2 className="text-xl font-bold mb-2 text-center">SYSTEM FAILURE</h2>
+                  <p className="text-sm mb-4">{error}</p>
+                  <button onClick={() => window.location.reload()} className="w-full bg-red-800 hover:bg-red-700 text-white py-2 rounded">
+                      RELOAD SYSTEM
+                  </button>
+              </div>
           </div>
-          <div className="animate-pulse w-3 h-3 bg-green-500 rounded-full"></div>
+      );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-green-500 p-4 font-mono selection:bg-green-900 selection:text-white">
+      <div className="max-w-4xl mx-auto border border-green-900 rounded-lg shadow-[0_0_30px_rgba(20,83,45,0.3)] bg-gray-900/80 backdrop-blur-md overflow-hidden">
+        
+        {/* Header */}
+        <header className="p-6 border-b border-green-900 flex flex-col md:flex-row justify-between items-center bg-black/40 gap-4">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+                <Activity className="text-green-400 animate-pulse" />
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tighter text-gray-100">
+                DTU <span className="text-green-500">SNIPER</span>
+              </h1>
+              <p className="text-xs text-green-700 font-sans">
+                STATUS: {loading ? 'CONNECTING...' : 'ONLINE'} | ID: {APP_ID}
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4 text-xs font-bold">
+            <div className="text-right">
+                <div className="text-gray-500">TARGETS</div>
+                <div className="text-xl text-white">{targets.length}</div>
+            </div>
+            <div className="h-8 w-px bg-green-900"></div>
+            <div className="text-right">
+                <div className="text-gray-500">AVAILABLE</div>
+                <div className="text-xl text-green-400">
+                    {targets.filter(t => t.lastSlots > 0).length}
+                </div>
+            </div>
+          </div>
         </header>
 
-        <form onSubmit={add} className="bg-gray-800 p-4 rounded-lg mb-6 shadow-lg border border-gray-700 flex flex-col md:flex-row gap-3">
-          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Tên môn (VD: CS101)" className="bg-gray-900 border border-gray-600 p-2 rounded text-white flex-1 focus:border-blue-500 outline-none"/>
-          <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="Dán URL chi tiết lớp học..." className="bg-gray-900 border border-gray-600 p-2 rounded text-white flex-[2] focus:border-blue-500 outline-none"/>
-          <button type="submit" className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-bold transition-colors flex items-center justify-center"><Plus/></button>
-        </form>
+        {/* Input Form */}
+        <div className="p-6 bg-green-900/5 border-b border-green-900/50">
+            <form onSubmit={add} className="flex flex-col md:flex-row gap-3">
+            <input 
+                value={name} onChange={e=>setName(e.target.value)} 
+                placeholder="Tên gợi nhớ (VD: CS101)" 
+                className="md:w-1/4 bg-gray-900 border border-green-800 p-3 rounded text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all placeholder-green-900/50"
+            />
+            <input 
+                value={url} onChange={e=>setUrl(e.target.value)} 
+                placeholder="Dán URL trang chi tiết lớp học..." 
+                className="flex-1 bg-gray-900 border border-green-800 p-3 rounded text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all placeholder-green-900/50"
+            />
+            <button 
+                type="submit" 
+                disabled={!user}
+                className="bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-black font-bold px-6 py-3 rounded flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
+            >
+                <Plus size={18} /> TARGET
+            </button>
+            </form>
+        </div>
 
-        <div className="space-y-3">
-          {loading ? <div className="text-center text-gray-500">Đang tải dữ liệu...</div> : targets.map(t => (
-            <div key={t.id} className={`p-4 rounded-lg border flex items-center justify-between transition-all ${t.lastSlots > 0 ? 'bg-green-900/20 border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.2)]' : 'bg-gray-800 border-gray-700'}`}>
-              <div className="overflow-hidden">
-                <h3 className="font-bold text-lg">{t.name}</h3>
-                <a href={t.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-1 truncate max-w-[200px] md:max-w-md">
-                  <ExternalLink size={10}/> Mở Link Gốc
+        {/* Targets List */}
+        <div className="divide-y divide-green-900/30 min-h-[300px]">
+          {loading ? (
+              <div className="flex flex-col items-center justify-center py-20 text-green-800 animate-pulse">
+                  <RefreshCw size={32} className="animate-spin mb-4"/>
+                  <p>SCANNING DATABASE...</p>
+              </div>
+          ) : targets.length === 0 ? (
+            <div className="text-center py-20 text-green-900/50 flex flex-col items-center">
+                <WifiOff size={48} className="mb-4 opacity-20"/>
+                <p>[NO TARGETS ACQUIRED]</p>
+                <p className="text-xs mt-2">Add a URL above to start monitoring</p>
+            </div>
+          ) : (
+             targets.map(t => (
+            <div key={t.id} className="group p-5 hover:bg-green-900/10 transition-colors flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              
+              {/* Info Column */}
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <div className="flex items-center gap-3 mb-1">
+                    <h3 className="font-bold text-lg text-gray-200 truncate">{t.name}</h3>
+                    {t.lastSlots > 0 ? (
+                        <span className="bg-green-500 text-black text-[10px] px-2 py-0.5 rounded font-bold animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]">
+                            LIVE
+                        </span>
+                    ) : t.lastSlots === 0 ? (
+                        <span className="bg-red-900/40 text-red-400 border border-red-900 text-[10px] px-2 py-0.5 rounded">
+                            FULL
+                        </span>
+                    ) : (
+                        <span className="bg-gray-800 text-gray-500 text-[10px] px-2 py-0.5 rounded">
+                            PENDING
+                        </span>
+                    )}
+                </div>
+                
+                <a href={t.url} target="_blank" rel="noreferrer" className="text-xs text-green-700 hover:text-green-400 flex items-center gap-1 transition-colors truncate mb-2">
+                  <ExternalLink size={12}/> {t.url}
                 </a>
-                <p className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
-                  <RefreshCw size={10}/> Cập nhật: {t.lastChecked ? new Date(t.lastChecked.seconds * 1000).toLocaleTimeString('vi-VN') : 'Chưa chạy'}
-                </p>
+
+                <div className="flex items-center gap-4 text-[10px] text-gray-500 font-sans">
+                    <span className="flex items-center gap-1">
+                        <RefreshCw size={10} /> 
+                        Updated: {t.lastChecked ? new Date(t.lastChecked.seconds * 1000).toLocaleTimeString('vi-VN') : 'Waiting for worker...'}
+                    </span>
+                </div>
               </div>
               
-              <div className="flex items-center gap-4">
+              {/* Stats & Actions */}
+              <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-green-900/30 pt-4 md:pt-0">
                 <div className="text-right">
-                  <div className={`text-3xl font-mono font-bold ${t.lastSlots > 0 ? 'text-green-400' : t.lastSlots === 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                    {t.lastSlots === -1 ? '?' : t.lastSlots}
+                  <div className="text-[10px] text-green-800 uppercase tracking-widest mb-1">Capacity</div>
+                  <div className={`text-3xl font-bold font-mono ${
+                      t.lastSlots > 0 ? 'text-green-400' : 
+                      t.lastSlots === 0 ? 'text-red-500' : 'text-gray-600'
+                  }`}>
+                    {t.lastSlots === -1 ? '--' : t.lastSlots}
                   </div>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500">SLOTS</div>
                 </div>
-                <button onClick={() => remove(t.id)} className="p-2 text-gray-600 hover:text-red-400 transition-colors"><Trash2 size={18}/></button>
+                
+                <button 
+                    onClick={() => remove(t.id)} 
+                    className="p-3 text-green-900 hover:text-red-500 hover:bg-red-900/10 rounded transition-all ml-2"
+                    title="Stop monitoring"
+                >
+                    <Trash2 size={20}/>
+                </button>
               </div>
             </div>
-          ))}
-          {targets.length === 0 && <div className="text-center text-gray-600 py-10 border-2 border-dashed border-gray-800 rounded-lg">Chưa có môn nào. Thêm link vào đi bạn!</div>}
+          )))}
         </div>
       </div>
     </div>
