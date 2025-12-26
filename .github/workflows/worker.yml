@@ -2,7 +2,7 @@ name: Slot Sniper Worker
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Chạy mỗi 15 phút
+#    - cron: '*/15 * * * *' # Chạy mỗi 15 phút
   workflow_dispatch: # Cho phép bấm nút chạy bằng tay
 
 jobs:
